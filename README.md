@@ -1,3 +1,4 @@
+English | [中文](README.zh.md)
 # Sci-Agents: Scientific Research Agent Framework
 
 An LLM-based scientific research agent framework for autonomous exploration and knowledge accumulation in a procedurally generated chemistry world, built around a ReAct reasoning loop and long-term memory management.
