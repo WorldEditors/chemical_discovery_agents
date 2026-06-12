@@ -1,0 +1,16 @@
+{
+  "model": "gpt-4o",
+  "api_key": null,
+  "base_url": null,
+  "temperature": 0.7,
+  "max_tokens": 4096,
+  "max_steps": 50,
+  "max_retries": 3,
+  "memory_dir": "./memory_store",
+  "working_memory_max_messages": 80,
+  "working_memory_max_tokens": 32000,
+  "complexity_level": "medium",
+  "seed": null,
+  "verbose": true,
+  "log_file": null
+}
