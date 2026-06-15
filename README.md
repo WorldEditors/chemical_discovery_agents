@@ -1,94 +1,156 @@
 English | [中文](README.zh.md)
+
 # Sci-Agents: Scientific Research Agent Framework
 
-An LLM-based scientific research agent framework for autonomous exploration and knowledge accumulation in a procedurally generated chemistry world, built around a ReAct reasoning loop and long-term memory management.
+An LLM-based scientific research agent for autonomous exploration in the
+`xenoverse.sci_research_env` chemistry environment. The agent uses a ReAct loop,
+OpenAI-compatible function calling, and persistent memory for experiment history
+and extracted chemical knowledge.
 
-## Architecture
+## Repository Layout
 
 ```text
-sci_agent/
-├── agent.py              # ReAct reasoning loop (Think → Act → Observe)
-├── config.py             # Configuration management
-├── llm/
-│   ├── base.py           # Abstract LLM client interface
-│   └── openai_client.py  # OpenAI-compatible implementation
-├── memory/
-│   ├── working.py        # Working memory (context window management)
-│   ├── episodic.py       # Episodic memory (persisted experiment history)
-│   ├── semantic.py       # Semantic memory (structured knowledge base)
-│   └── manager.py        # Unified memory coordinator
-└── tools/
-    └── env_adapter.py    # Environment interaction adapter
+.
+|-- run.py                 # Run one agent session
+|-- eval.py                # Run the fixed 60-world evaluation benchmark
+|-- configs/
+|   `-- default.json       # Default AgentConfig values
+`-- sci_agent/
+    |-- agent.py           # ReAct reasoning loop
+    |-- config.py          # Configuration dataclass and file loading
+    |-- llm/               # OpenAI-compatible LLM client
+    |-- memory/            # Working, episodic, and semantic memory
+    `-- tools/
+        `-- env_adapter.py # Adapter for the Xenoverse environment tools
 ```
 
-## Core Design
-
-### ReAct Agent Loop
-
-The agent follows the ReAct (Reasoning + Acting) pattern:
-
-1. **Think** - The LLM receives the current context (task description, memory, and observation history), reasons about it, and decides the next action.
-2. **Act** - The LLM's function call is dispatched into the environment for execution.
-3. **Observe** - The environment response is recorded into memory and fed back to the LLM.
-
-At each step, the LLM's reasoning (`response.content`) and tool calls are produced together. The reasoning trace is retained in both working memory and episodic memory.
-
-### Three-Tier Memory System
-
-| Layer | Purpose | Persistent | Cross-Session |
-|------|------|--------|-----------|
-| **Working Memory** | Manages conversation history inside the LLM context window and handles truncation | No | No |
-| **Episodic Memory** | Records action/observation/reasoning for each experiment | Yes (JSON) | Yes |
-| **Semantic Memory** | Structured knowledge graph of compound properties, reaction relationships, and strategy insights | Yes (JSON) | Yes |
-
-**Memory lifecycle:**
-- After every tool call, semantic information such as compound properties and reaction products is automatically extracted into semantic memory.
-- At the end of a session, an `ExperimentSummary` is generated and stored in episodic memory.
-- When a new session starts, persisted memory is assembled into context and injected into the system prompt.
-
-### Automatic Knowledge Extraction
-
-`MemoryManager._extract_semantic()` automatically extracts structured knowledge from tool results:
-- `analyze_compound` -> updates compound properties and medicinal-value clues
-- `perform_reaction` -> records reactant/product relationships and experiment conditions
-- `estimate_cost` -> accumulates cost-model insights
-- `submit_solution` -> records the best score and successful strategies
-
-## Quick Start
-
-### Installation
+## Installation
 
 ```bash
-cd sci_agents
 pip install -r requirements.txt
 ```
 
-Make sure the `xenoverse` package is importable, or keep `environment/` and `world_gen/` in the current directory.
-
-### Run
+The project depends on `xenoverse`. Keep the Xenoverse repo next to this repo as
+`../Xenoverse`, install it as a package, or set `XENOVERSE_ROOT` before running
+`eval.py`:
 
 ```bash
-# Set API credentials
-export OPENAI_API_KEY="your-key"
-export OPENAI_BASE_URL="https://your-endpoint/v1"  # optional, works with any OpenAI-compatible API
-
-# Run with the default configuration
-python run.py --seed 42 --complexity medium
-
-# Specify model and step count
-python run.py --model gpt-4o --max-steps 30 --complexity hard
-
-# Use a custom config file
-python run.py --config configs/default.json
-
-# Use a custom memory directory for cross-session learning
-python run.py --seed 42 --memory-dir ./my_memory
+export XENOVERSE_ROOT=/path/to/Xenoverse
 ```
 
-### Programmatic Usage
+Set API credentials through CLI flags or environment variables:
+
+```bash
+export OPENAI_API_KEY="your-key"
+export OPENAI_BASE_URL="https://your-endpoint/v1"  # optional
+```
+
+## Run One Agent Session
+
+```bash
+# Use configs/default.json when present
+python run.py --seed 42 --complexity medium
+
+# Override model and step budget
+python run.py --model gpt-4o --max-steps 80 --complexity hard
+
+# Load a custom JSON or YAML config
+python run.py --config configs/default.json
+
+# Persist memory across sessions
+python run.py --seed 42 --memory-dir ./memory_store
+```
+
+`run.py` starts one sampled task and prints the steps taken, best submitted
+score/cost, and memory summary.
+
+## Evaluation Benchmark
+
+`eval.py` runs the fixed benchmark used by this repository:
+
+- 60 pre-sampled worlds in total.
+- 20 `easy`, 20 `medium`, and 20 `hard` worlds.
+- Seeds are deterministic: `easy=1000..1019`, `medium=2000..2019`,
+  `hard=3000..3019`.
+- Each world runs 3 trials by default.
+- Metrics are reported per difficulty and overall: `avg_score`, `pass@1`,
+  `pass@3`, and `pass^3`.
+
+List benchmark worlds:
+
+```bash
+python eval.py --list-worlds
+```
+
+Run the full benchmark:
+
+```bash
+python eval.py --model gpt-4o --max-steps 120 --output results/eval.json
+```
+
+Run a smaller subset:
+
+```bash
+# One world by index, 0-59
+python eval.py --world-idx 7 --n-runs 1 --output results/world_07.json
+
+# All worlds at one difficulty
+python eval.py --difficulty medium --n-runs 3 --output results/medium.json
+```
+
+Resume an interrupted evaluation:
+
+```bash
+python eval.py --resume results/eval.checkpoint.json --output results/eval.json
+```
+
+`eval.py` writes a checkpoint after each completed world. If the run completes
+successfully, the final JSON is written to `--output` and the checkpoint file is
+removed.
+
+### Evaluation Scoring
+
+For solvable tasks, the agent passes when it submits a valid solution. The score
+is capped at `1.0` and is computed as:
+
+```text
+optimal_cost / agent_best_cost
+```
+
+If the agent declares no solution for a solvable task, the score is `0.0`.
+
+For unsolvable tasks, the agent passes only when it declares no solution. The
+score rewards cheaper investigation:
+
+```text
+min(1.0, baseline_cost / total_experiment_cost)
+```
+
+The unsolvable baselines are `50.0` for easy, `100.0` for medium, and `200.0`
+for hard.
+
+### Evaluation CLI
+
+| Flag | Description |
+| --- | --- |
+| `--config` | Load an agent config file. |
+| `--model` | Override the LLM model name. |
+| `--api-key` | Override the API key. |
+| `--base-url` | Override the OpenAI-compatible API base URL. |
+| `--max-steps` | Max agent steps per trial. Default: `120`. |
+| `--memory-dir` | Persistent memory directory. Evaluation disables memory per trial internally to keep trials independent. |
+| `--output` | Final JSON output path. Default: `eval_results_<timestamp>.json`. |
+| `--quiet` | Reduce logging verbosity. |
+| `--world-idx` | Run only one world index, from `0` to `59`. |
+| `--difficulty` | Run only `easy`, `medium`, or `hard` worlds. |
+| `--n-runs` | Trials per world. Default: `3`. |
+| `--resume` | Resume from a checkpoint/results JSON and skip completed worlds. |
+| `--list-worlds` | Print world indices, difficulties, and seeds, then exit. |
+
+## Programmatic Usage
 
 ```python
-from sci_agent import SciResearchAgent, AgentConfig
+from sci_agent import AgentConfig, SciResearchAgent
 
 config = AgentConfig(
     model="gpt-4o",
@@ -100,43 +162,35 @@ config = AgentConfig(
 agent = SciResearchAgent(config=config)
 result = agent.run(seed=42)
 
-print(f"Best score: {result['best_score']}")
-print(f"Steps: {result['steps_taken']}")
-print(f"Knowledge:\n{result['memory_summary']}")
-```
-
-### Cross-Session Experience Accumulation
-
-```python
-# Session 1: explore world seed=42
-agent = SciResearchAgent(config=AgentConfig(memory_dir="./shared_memory"))
-agent.run(seed=42)
-
-# Session 2: explore a new world while reusing prior strategy insights
-agent = SciResearchAgent(config=AgentConfig(memory_dir="./shared_memory"))
-agent.run(seed=100)
-# The system prompt will automatically include discoveries and strategies from earlier sessions
+print(result["best_score"])
+print(result["steps_taken"])
+print(result["memory_summary"])
 ```
 
 ## Configuration
 
 | Parameter | Default | Description |
-|------|--------|------|
-| `model` | `gpt-4o` | LLM model name |
-| `api_key` | `None` | API key, or `OPENAI_API_KEY` from the environment |
-| `base_url` | `None` | API endpoint, or `OPENAI_BASE_URL` from the environment |
-| `temperature` | `0.7` | Sampling temperature |
-| `max_tokens` | `4096` | Maximum output tokens for a single LLM call |
-| `max_steps` | `50` | Maximum reasoning steps |
-| `memory_dir` | `./memory_store` | Memory persistence directory |
-| `complexity_level` | `None` | World complexity (`easy` / `medium` / `hard`) |
-| `seed` | `None` | Random seed for world generation |
-| `verbose` | `true` | Whether to print runtime logs |
+| --- | --- | --- |
+| `model` | `gpt-4o` | LLM model name. |
+| `api_key` | `None` | API key, or `OPENAI_API_KEY` from the environment. |
+| `base_url` | `None` | API endpoint, or `OPENAI_BASE_URL` from the environment. |
+| `temperature` | `0.7` | Sampling temperature. |
+| `max_tokens` | `4096` | Maximum output tokens for one LLM call. |
+| `max_steps` | `50` | Maximum agent steps for `run.py`; `eval.py` defaults to `120`. |
+| `max_retries` | `3` | LLM call retry count. |
+| `memory_dir` | `./memory_store` | Memory persistence directory. |
+| `working_memory_max_messages` | `80` | Maximum messages retained in working memory. |
+| `working_memory_max_tokens` | `32000` | Approximate working-memory token budget. |
+| `complexity_level` | `None` | World complexity: `easy`, `medium`, or `hard`. |
+| `seed` | `None` | Random seed for task sampling. |
+| `verbose` | `true` | Print runtime logs. |
+| `log_file` | `None` | Optional log file path. |
 
 ## Dependencies
 
-- `openai>=1.0.0` - LLM API client
-- `tiktoken>=0.5.0` - Token counting
-- `numpy>=1.24.0` - Environment dependency
-- `scipy>=1.10.0` - Environment dependency
-- `pyyaml>=6.0` - YAML config support (optional)
+- `xenoverse`
+- `openai>=1.0.0`
+- `tiktoken>=0.5.0`
+- `numpy>=1.24.0`
+- `scipy>=1.10.0`
+- `pyyaml>=6.0`

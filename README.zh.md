@@ -1,93 +1,146 @@
-# Sci-Agents: Scientific Research Agent Framework
+[English](README.md) | 中文
 
-基于 LLM 的科学研究智能体框架，通过 ReAct 推理循环与长期记忆管理，在程序化生成的化学世界中进行自主探索和知识积累。
+# Sci-Agents：科学研究智能体框架
 
-## 架构
+这是一个面向 `xenoverse.sci_research_env` 化学环境的 LLM 科学研究智能体。智能体使用
+ReAct 推理循环、OpenAI 兼容的函数调用，以及可持久化的实验记忆和化学知识抽取。
 
+## 仓库结构
+
+```text
+.
+|-- run.py                 # 运行单次智能体会话
+|-- eval.py                # 运行固定的 60 世界评测基准
+|-- configs/
+|   `-- default.json       # 默认 AgentConfig 配置
+`-- sci_agent/
+    |-- agent.py           # ReAct 推理循环
+    |-- config.py          # 配置 dataclass 与配置文件加载
+    |-- llm/               # OpenAI 兼容 LLM 客户端
+    |-- memory/            # 工作记忆、情景记忆、语义记忆
+    `-- tools/
+        `-- env_adapter.py # Xenoverse 环境工具适配器
 ```
-sci_agent/
-├── agent.py              # ReAct 推理循环 (Think → Act → Observe)
-├── config.py             # 配置管理
-├── llm/
-│   ├── base.py           # LLM 客户端抽象接口
-│   └── openai_client.py  # OpenAI 兼容实现
-├── memory/
-│   ├── working.py        # 工作记忆 (上下文窗口管理)
-│   ├── episodic.py       # 情景记忆 (实验经历持久化)
-│   ├── semantic.py       # 语义记忆 (结构化知识库)
-│   └── manager.py        # 统一记忆协调器
-└── tools/
-    └── env_adapter.py    # 环境交互适配器
-```
 
-## 核心设计
-
-### ReAct Agent Loop
-
-智能体采用 ReAct (Reasoning + Acting) 范式运行：
-
-1. **Think** — LLM 接收当前上下文（任务描述 + 记忆 + 观察历史），进行推理并决定下一步行动
-2. **Act** — 将 LLM 的 function call 分发到环境中执行
-3. **Observe** — 接收环境返回的结果，记录到记忆系统，反馈给 LLM
-
-每一步中，LLM 的 reasoning（`response.content`）与 tool calls 同时产生，reasoning 作为思考链被保留在工作记忆和情景记忆中。
-
-### 三级记忆系统
-
-| 层级 | 作用 | 持久化 | 跨 Session |
-|------|------|--------|-----------|
-| **Working Memory** | 管理 LLM 上下文窗口内的对话历史，处理截断 | 否 | 否 |
-| **Episodic Memory** | 记录每次实验的 action/observation/reasoning | 是 (JSON) | 是 |
-| **Semantic Memory** | 结构化知识图谱：化合物属性、反应关系、策略洞察 | 是 (JSON) | 是 |
-
-**记忆生命周期：**
-- 每次 tool call 执行后，自动提取语义信息（化合物属性、反应产物等）写入 Semantic Memory
-- Session 结束时，生成 ExperimentSummary 存入 Episodic Memory
-- 新 Session 启动时，从持久化记忆中组装上下文注入 system prompt
-
-### 知识自动提取
-
-`MemoryManager._extract_semantic()` 从工具调用结果中自动提取结构化知识：
-- `analyze_compound` → 更新化合物属性、药用价值线索
-- `perform_reaction` → 记录反应物/产物关系、实验条件
-- `estimate_cost` → 积累成本模型洞察
-- `submit_solution` → 记录最佳得分和成功策略
-
-## 快速开始
-
-### 安装
+## 安装
 
 ```bash
-cd sci_agents
 pip install -r requirements.txt
 ```
 
-确保 `xenoverse` 包可导入（或将 `environment/`、`world_gen/` 保留在当前目录）。
-
-### 运行
+项目依赖 `xenoverse`。可以将 Xenoverse 仓库放在本仓库旁边的 `../Xenoverse`，也可以将其安装为
+Python 包，或在运行 `eval.py` 前设置 `XENOVERSE_ROOT`：
 
 ```bash
-# 设置 API Key
-export OPENAI_API_KEY="your-key"
-export OPENAI_BASE_URL="https://your-endpoint/v1"  # 可选，兼容任何 OpenAI API 接口
-
-# 使用默认配置运行
-python run.py --seed 42 --complexity medium
-
-# 指定模型和步数
-python run.py --model gpt-4o --max-steps 30 --complexity hard
-
-# 使用自定义配置文件
-python run.py --config configs/default.json
-
-# 指定记忆存储目录（跨 session 积累经验）
-python run.py --seed 42 --memory-dir ./my_memory
+export XENOVERSE_ROOT=/path/to/Xenoverse
 ```
 
-### 编程方式使用
+通过命令行参数或环境变量设置 API 凭据：
+
+```bash
+export OPENAI_API_KEY="your-key"
+export OPENAI_BASE_URL="https://your-endpoint/v1"  # 可选
+```
+
+## 运行单次会话
+
+```bash
+# 存在 configs/default.json 时会自动使用它
+python run.py --seed 42 --complexity medium
+
+# 覆盖模型和步数预算
+python run.py --model gpt-4o --max-steps 80 --complexity hard
+
+# 加载自定义 JSON 或 YAML 配置
+python run.py --config configs/default.json
+
+# 跨会话持久化记忆
+python run.py --seed 42 --memory-dir ./memory_store
+```
+
+`run.py` 会启动一个采样任务，并打印执行步数、最佳提交得分/成本和记忆摘要。
+
+## 评测基准
+
+`eval.py` 运行本仓库固定的评测基准：
+
+- 总共 60 个预采样世界。
+- `easy`、`medium`、`hard` 各 20 个世界。
+- 种子固定：`easy=1000..1019`，`medium=2000..2019`，`hard=3000..3019`。
+- 默认每个世界运行 3 次 trial。
+- 按难度和总体统计 `avg_score`、`pass@1`、`pass@3`、`pass^3`。
+
+列出所有评测世界：
+
+```bash
+python eval.py --list-worlds
+```
+
+运行完整评测：
+
+```bash
+python eval.py --model gpt-4o --max-steps 120 --output results/eval.json
+```
+
+运行较小子集：
+
+```bash
+# 运行单个世界，索引范围 0-59
+python eval.py --world-idx 7 --n-runs 1 --output results/world_07.json
+
+# 运行某一难度的所有世界
+python eval.py --difficulty medium --n-runs 3 --output results/medium.json
+```
+
+恢复中断的评测：
+
+```bash
+python eval.py --resume results/eval.checkpoint.json --output results/eval.json
+```
+
+`eval.py` 会在每个世界完成后写入 checkpoint。评测成功完成后，最终 JSON 写入 `--output`，并删除
+checkpoint 文件。
+
+### 评测计分
+
+对于可解任务，智能体提交有效解即为通过。分数上限为 `1.0`，计算方式为：
+
+```text
+optimal_cost / agent_best_cost
+```
+
+如果智能体在可解任务中声明无解，分数为 `0.0`。
+
+对于无解任务，只有正确声明无解才算通过。分数会奖励更低成本的探索：
+
+```text
+min(1.0, baseline_cost / total_experiment_cost)
+```
+
+无解任务的 baseline 为：easy `50.0`，medium `100.0`，hard `200.0`。
+
+### 评测命令行参数
+
+| 参数 | 说明 |
+| --- | --- |
+| `--config` | 加载智能体配置文件。 |
+| `--model` | 覆盖 LLM 模型名。 |
+| `--api-key` | 覆盖 API key。 |
+| `--base-url` | 覆盖 OpenAI 兼容 API base URL。 |
+| `--max-steps` | 每次 trial 的最大智能体步数。默认：`120`。 |
+| `--memory-dir` | 持久化记忆目录。评测内部会禁用每次 trial 的记忆目录，以保持 trial 独立。 |
+| `--output` | 最终 JSON 输出路径。默认：`eval_results_<timestamp>.json`。 |
+| `--quiet` | 降低日志详细程度。 |
+| `--world-idx` | 只运行单个世界索引，范围 `0` 到 `59`。 |
+| `--difficulty` | 只运行 `easy`、`medium` 或 `hard` 世界。 |
+| `--n-runs` | 每个世界的 trial 数。默认：`3`。 |
+| `--resume` | 从 checkpoint/results JSON 恢复，并跳过已完成世界。 |
+| `--list-worlds` | 打印世界索引、难度和种子后退出。 |
+
+## 编程方式使用
 
 ```python
-from sci_agent import SciResearchAgent, AgentConfig
+from sci_agent import AgentConfig, SciResearchAgent
 
 config = AgentConfig(
     model="gpt-4o",
@@ -99,43 +152,35 @@ config = AgentConfig(
 agent = SciResearchAgent(config=config)
 result = agent.run(seed=42)
 
-print(f"Best score: {result['best_score']}")
-print(f"Steps: {result['steps_taken']}")
-print(f"Knowledge:\n{result['memory_summary']}")
-```
-
-### 跨 Session 经验积累
-
-```python
-# Session 1: 探索 world seed=42
-agent = SciResearchAgent(config=AgentConfig(memory_dir="./shared_memory"))
-agent.run(seed=42)
-
-# Session 2: 探索新世界，但利用之前积累的策略洞察
-agent = SciResearchAgent(config=AgentConfig(memory_dir="./shared_memory"))
-agent.run(seed=100)
-# system prompt 中会自动注入过去 session 的发现和策略
+print(result["best_score"])
+print(result["steps_taken"])
+print(result["memory_summary"])
 ```
 
 ## 配置项
 
 | 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `model` | `gpt-4o` | LLM 模型名称 |
-| `api_key` | `None` | API Key（或环境变量 `OPENAI_API_KEY`） |
-| `base_url` | `None` | API 地址（或环境变量 `OPENAI_BASE_URL`） |
-| `temperature` | `0.7` | 采样温度 |
-| `max_tokens` | `4096` | 单次 LLM 最大输出 token |
-| `max_steps` | `50` | 最大推理步数 |
-| `memory_dir` | `./memory_store` | 记忆持久化目录 |
-| `complexity_level` | `None` | 世界复杂度 (easy/medium/hard) |
-| `seed` | `None` | 世界生成随机种子 |
-| `verbose` | `true` | 是否打印运行日志 |
+| --- | --- | --- |
+| `model` | `gpt-4o` | LLM 模型名。 |
+| `api_key` | `None` | API key，或环境变量 `OPENAI_API_KEY`。 |
+| `base_url` | `None` | API endpoint，或环境变量 `OPENAI_BASE_URL`。 |
+| `temperature` | `0.7` | 采样温度。 |
+| `max_tokens` | `4096` | 单次 LLM 调用的最大输出 token 数。 |
+| `max_steps` | `50` | `run.py` 的最大智能体步数；`eval.py` 默认使用 `120`。 |
+| `max_retries` | `3` | LLM 调用重试次数。 |
+| `memory_dir` | `./memory_store` | 记忆持久化目录。 |
+| `working_memory_max_messages` | `80` | 工作记忆保留的最大消息数。 |
+| `working_memory_max_tokens` | `32000` | 工作记忆近似 token 预算。 |
+| `complexity_level` | `None` | 世界复杂度：`easy`、`medium` 或 `hard`。 |
+| `seed` | `None` | 任务采样随机种子。 |
+| `verbose` | `true` | 是否打印运行日志。 |
+| `log_file` | `None` | 可选日志文件路径。 |
 
 ## 依赖
 
-- `openai>=1.0.0` — LLM API 客户端
-- `tiktoken>=0.5.0` — Token 计数
-- `numpy>=1.24.0` — 环境依赖
-- `scipy>=1.10.0` — 环境依赖
-- `pyyaml>=6.0` — YAML 配置支持（可选）
+- `xenoverse`
+- `openai>=1.0.0`
+- `tiktoken>=0.5.0`
+- `numpy>=1.24.0`
+- `scipy>=1.10.0`
+- `pyyaml>=6.0`
