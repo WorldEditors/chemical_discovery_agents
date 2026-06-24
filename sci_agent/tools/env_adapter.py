@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-from xenoverse.sci_research_env.environment.backend import SciResearchBackend
+from xenoverse.chemverse.environment.backend import SciResearchBackend
 
 
 class EnvironmentToolAdapter:

@@ -22,7 +22,7 @@ Outputs:
   <outdir>/world_chem_tree_summary.json              # per-world stats
 
 Usage:
-  python scripts/world_chem_tree.py log.eval.gpt5 -o world_trees --only 0 1
+  python visualize.py log.eval.gpt5 -o world_trees --only 0 1
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ import ast
 import json
 import os
 import re
+import sys
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -41,7 +42,16 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import networkx as nx
 
-from xenoverse.sci_research_env.task_sampler import SciResearchTaskSampler
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+_xenoverse_root = os.environ.get(
+    "XENOVERSE_ROOT",
+    os.path.join(os.path.dirname(__file__), "..", "Xenoverse"),
+)
+if os.path.isdir(_xenoverse_root):
+    sys.path.insert(0, os.path.abspath(_xenoverse_root))
+
+from xenoverse.chemverse.task_sampler import SciResearchTaskSampler
 
 
 WORLD_HEADER_RE = re.compile(
@@ -70,6 +80,7 @@ def _coerce(text: str) -> Optional[Dict[str, Any]]:
 
 def parse_log(log_path: str) -> List[Dict[str, Any]]:
     worlds: List[Dict[str, Any]] = []
+    world_pos_by_idx: Dict[int, int] = {}
     cur: Optional[Dict[str, Any]] = None
     pending: Optional[Dict[str, Any]] = None
     pending_finish = False
@@ -78,15 +89,20 @@ def parse_log(log_path: str) -> List[Dict[str, Any]]:
             line = line.rstrip("\n")
             m = WORLD_HEADER_RE.match(line.strip())
             if m:
+                world_idx = int(m.group(1))
                 cur = {
-                    "world_idx": int(m.group(1)),
+                    "world_idx": world_idx,
                     "difficulty": m.group(2),
                     "seed": int(m.group(3)),
                     "attempts": [],
                     "purchased": set(),
                     "trials": [],   # list of verdict strings, one per finish_experiment
                 }
-                worlds.append(cur)
+                if world_idx in world_pos_by_idx:
+                    worlds[world_pos_by_idx[world_idx]] = cur
+                else:
+                    world_pos_by_idx[world_idx] = len(worlds)
+                    worlds.append(cur)
                 pending = None
                 pending_finish = False
                 continue
@@ -230,12 +246,19 @@ NODE_COLORS = {
 }
 
 
-def draw(analysis: Dict[str, Any], out_path: str) -> None:
+def _legend_handles():
+    from matplotlib.patches import Patch
+    return [
+        Patch(facecolor=NODE_COLORS["owned"], edgecolor="black", label="Owned"),
+        Patch(facecolor=NODE_COLORS["tried_failed"], edgecolor="black", label="Tried failed"),
+        Patch(facecolor=NODE_COLORS["unexplored"], edgecolor="black", label="Unexplored"),
+        Patch(facecolor="white", edgecolor="#f1c40f", linewidth=3, label="Target"),
+    ]
+
+
+def _build_graph_layout(analysis: Dict[str, Any]) -> Tuple[nx.DiGraph, Dict[str, Tuple[float, float]], Dict[int, List[str]], int, int]:
     chems = analysis["chemicals"]
     rxns = analysis["reactions"]
-    targets = analysis["targets"]
-    status = analysis["product_status"]
-    purchased = analysis.get("purchased", set())
 
     G = nx.DiGraph()
     for cid, c in chems.items():
@@ -262,6 +285,36 @@ def draw(analysis: Dict[str, Any], out_path: str) -> None:
             x = (i + 1) / (n + 1) * layer_width
             y = (max_layer - lay)  # layer 1 -> top
             pos[cid] = (x, y)
+    return G, pos, by_layer, max_layer, layer_width
+
+
+def _world_title(analysis: Dict[str, Any]) -> Tuple[str, str]:
+    trials = analysis.get("trials", [])
+    from collections import Counter
+    tc = Counter(trials)
+    total = len(trials)
+
+    if analysis["is_solvable"]:
+        correct = tc.get("SOLVED", 0)
+        incorrect = tc.get("DECLARED_UNSOLVABLE", 0) + tc.get("FAILED", 0)
+        verdict = f"PASS {correct}/{total}" if total else "PASS 0/0"
+    else:
+        correct = tc.get("DECLARED_UNSOLVABLE", 0)
+        incorrect = tc.get("SOLVED", 0) + tc.get("FAILED", 0)
+        verdict = f"PASS {correct}/{total}" if total else "PASS 0/0"
+    title_color = "#27ae60" if correct > incorrect else ("#c0392b" if incorrect > 0 else "#7f8c8d")
+
+    title = f"World {analysis['world_idx']:02d} | {analysis['difficulty']} | {verdict}"
+    return title, title_color
+
+
+def draw_on_ax(ax, analysis: Dict[str, Any], show_legend: bool = True) -> None:
+    chems = analysis["chemicals"]
+    targets = analysis["targets"]
+    status = analysis["product_status"]
+    purchased = analysis.get("purchased", set())
+
+    G, pos, by_layer, max_layer, layer_width = _build_graph_layout(analysis)
 
     # Node colors
     node_color: List[str] = []
@@ -286,10 +339,6 @@ def draw(analysis: Dict[str, Any], out_path: str) -> None:
             edge_color_node.append("#2d3436")
             linewidths.append(0.8)
 
-    fig_w = max(12, layer_width * 2.0)
-    fig_h = max(7, max_layer * 2.2)
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-
     nx.draw_networkx_edges(
         G, pos, ax=ax, edge_color="#7f8c8d", width=1.0,
         arrows=True, arrowstyle="-|>", arrowsize=14, alpha=0.7,
@@ -300,61 +349,65 @@ def draw(analysis: Dict[str, Any], out_path: str) -> None:
         linewidths=linewidths, node_size=2600,
     )
 
-    # Layer guides
-    for lay in by_layer:
-        ax.text(-0.4, max_layer - lay, f"L{lay}", fontsize=9, color="#636e72",
-                ha="right", va="center", fontweight="bold")
-
-    c = analysis["constraints"]
-    solvable_tag = "SOLVABLE" if analysis["is_solvable"] else "UNSOLVABLE"
-    trials = analysis.get("trials", [])
-    from collections import Counter
-    tc = Counter(trials)
-    if trials:
-        verdict_str = (
-            f"Agent ({len(trials)} trials): "
-            f"SOLVED={tc.get('SOLVED',0)} "
-            f"DECLARED_UNSOLVABLE={tc.get('DECLARED_UNSOLVABLE',0)} "
-            f"FAILED={tc.get('FAILED',0)}"
-        )
-    else:
-        verdict_str = "Agent: no finish_experiment recorded"
-
-    # Correctness vs ground truth
-    if analysis["is_solvable"]:
-        correct = tc.get("SOLVED", 0)
-        incorrect = tc.get("DECLARED_UNSOLVABLE", 0) + tc.get("FAILED", 0)
-    else:
-        correct = tc.get("DECLARED_UNSOLVABLE", 0)
-        incorrect = tc.get("SOLVED", 0) + tc.get("FAILED", 0)
-    verdict_color = "#27ae60" if correct > incorrect else ("#c0392b" if incorrect > 0 else "#7f8c8d")
-
-    title = (
-        f"World {analysis['world_idx']:02d} | {analysis['difficulty']} | seed={analysis['seed']}  "
-        f"| ground-truth: {solvable_tag}\n"
-        f"{verdict_str}\n"
-        f"med>={c['min_medicinal']}, tox<{c['max_toxicity']}, yield>{c['min_yield_g']}g  "
-        f"| targets={len(targets)} reached={sum(1 for v in status.values() if v=='reached')} "
-        f"tried_failed={sum(1 for v in status.values() if v=='tried_failed')}"
-    )
-    ax.set_title(title, fontsize=11, color=verdict_color)
+    title, title_color = _world_title(analysis)
+    ax.set_title(title, fontsize=32, color=title_color)
     ax.set_axis_off()
 
-    from matplotlib.patches import Patch
-    legend = [
-        Patch(facecolor=NODE_COLORS["owned"], edgecolor="black",
-              label="Owned (purchased or synthesized)"),
-        Patch(facecolor=NODE_COLORS["tried_failed"], edgecolor="black",
-              label="Tried but conditions wrong"),
-        Patch(facecolor=NODE_COLORS["unexplored"], edgecolor="black",
-              label="Not reached / not bought"),
-        Patch(facecolor="white", edgecolor="#f1c40f", linewidth=3,
-              label="Target-eligible (med/tox OK)"),
-    ]
-    ax.legend(handles=legend, loc="lower left", fontsize=8, frameon=True, framealpha=0.9)
+
+def draw(analysis: Dict[str, Any], out_path: str) -> None:
+    _, _, _, max_layer, layer_width = _build_graph_layout(analysis)
+    fig_w = max(12, layer_width * 2.0)
+    fig_h = max(7, max_layer * 2.2)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    draw_on_ax(ax, analysis, show_legend=False)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=140)
+    plt.close(fig)
+
+
+def draw_combined(analyses: List[Dict[str, Any]], out_path: str) -> None:
+    if not analyses:
+        return
+    n = len(analyses)
+    ncols = min(6, n)
+    nrows = (n + ncols - 1) // ncols
+
+    max_layer = 1
+    max_width = 1
+    for analysis in analyses:
+        _, _, _, world_max_layer, world_layer_width = _build_graph_layout(analysis)
+        max_layer = max(max_layer, world_max_layer)
+        max_width = max(max_width, world_layer_width)
+
+    fig_w = max(12 * ncols, max_width * 2.0 * ncols)
+    fig_h = max(7 * nrows, max_layer * 2.4 * nrows)
+    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(fig_w, fig_h), squeeze=False)
+
+    flat_axes = [ax for row in axes for ax in row]
+    for idx, analysis in enumerate(analyses):
+        draw_on_ax(flat_axes[idx], analysis, show_legend=False)
+    for idx in range(len(analyses), len(flat_axes)):
+        flat_axes[idx].set_axis_off()
 
     fig.tight_layout()
     fig.savefig(out_path, dpi=140)
+    plt.close(fig)
+
+
+def draw_legend(out_path: str) -> None:
+    fig, ax = plt.subplots(figsize=(5.2, 1.2))
+    ax.axis("off")
+    ax.legend(
+        handles=_legend_handles(),
+        loc="center",
+        ncol=4,
+        fontsize=10,
+        frameon=False,
+        handlelength=1.6,
+        columnspacing=1.4,
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=140, bbox_inches="tight", pad_inches=0.1)
     plt.close(fig)
 
 
@@ -375,21 +428,18 @@ def main() -> None:
     worlds = parse_log(args.log)
     print(f"  found {len(worlds)} world block(s)")
 
+    selected_worlds = [w for w in worlds if not args.only or w["world_idx"] in args.only]
     summary: List[Dict[str, Any]] = []
-    for w in worlds:
-        if args.only and w["world_idx"] not in args.only:
-            continue
+    analyses: List[Dict[str, Any]] = []
+    for w in selected_worlds:
         try:
             analysis = analyze_world(w)
         except Exception as e:
             print(f"  World {w['world_idx']:02d}: FAILED to resample: {e}")
             continue
-        out_png = os.path.join(
-            args.outdir, f"world_{w['world_idx']:02d}_{w['difficulty']}_tree.png"
-        )
-        draw(analysis, out_png)
         reached = sum(1 for v in analysis["product_status"].values() if v == "reached")
         failed = sum(1 for v in analysis["product_status"].values() if v == "tried_failed")
+        analyses.append(analysis)
         summary.append({
             "world_idx": analysis["world_idx"],
             "difficulty": analysis["difficulty"],
@@ -402,17 +452,36 @@ def main() -> None:
             "num_targets": len(analysis["targets"]),
             "num_reached": reached,
             "num_tried_failed": failed,
-            "image": out_png,
         })
         print(f"  World {analysis['world_idx']:02d} ({analysis['difficulty']}): "
               f"chems={len(analysis['chemicals'])}, reactions={len(analysis['reactions'])}, "
-              f"targets={len(analysis['targets'])}, reached={reached}, tried_failed={failed} "
-              f"-> {out_png}")
+              f"targets={len(analysis['targets'])}, reached={reached}, tried_failed={failed}")
+
+    if not analyses:
+        print("No worlds selected or no plots generated.")
+    elif args.only and len(analyses) > 1:
+        joined = "_".join(f"{a['world_idx']:02d}" for a in analyses)
+        out_png = os.path.join(args.outdir, f"worlds_{joined}_tree.png")
+        draw_combined(analyses, out_png)
+        for item in summary:
+            item["image"] = out_png
+        print(f"Wrote combined image: {out_png}")
+    else:
+        for analysis, item in zip(analyses, summary):
+            out_png = os.path.join(
+                args.outdir, f"world_{analysis['world_idx']:02d}_{analysis['difficulty']}_tree.png"
+            )
+            draw(analysis, out_png)
+            item["image"] = out_png
+            print(f"Wrote image: {out_png}")
 
     spath = os.path.join(args.outdir, "world_chem_tree_summary.json")
     with open(spath, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
     print(f"Wrote summary: {spath}")
+    legend_path = os.path.join(args.outdir, "world_chem_tree_legend.png")
+    draw_legend(legend_path)
+    print(f"Wrote legend: {legend_path}")
 
 
 if __name__ == "__main__":

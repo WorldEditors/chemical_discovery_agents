@@ -3,7 +3,7 @@ English | [中文](README.zh.md)
 # Sci-Agents: Scientific Research Agent Framework
 
 An LLM-based scientific research agent for autonomous exploration in the
-`xenoverse.sci_research_env` chemistry environment. The agent uses a ReAct loop,
+`xenoverse.chemverse` chemistry environment. The agent uses a ReAct loop,
 OpenAI-compatible function calling, and persistent memory for experiment history
 and extracted chemical knowledge.
 
@@ -12,7 +12,7 @@ and extracted chemical knowledge.
 ```text
 .
 |-- run.py                 # Run one agent session
-|-- eval.py                # Run the fixed 60-world evaluation benchmark
+|-- eval.py                # Run the fixed 40-world evaluation benchmark
 |-- configs/
 |   `-- default.json       # Default AgentConfig values
 `-- sci_agent/
@@ -68,10 +68,9 @@ score/cost, and memory summary.
 
 `eval.py` runs the fixed benchmark used by this repository:
 
-- 60 pre-sampled worlds in total.
-- 20 `easy`, 20 `medium`, and 20 `hard` worlds.
-- Seeds are deterministic: `easy=1000..1019`, `medium=2000..2019`,
-  `hard=3000..3019`.
+- 40 pre-sampled worlds in total.
+- 20 `easy` and 20 `medium` worlds.
+- Seeds are deterministic: `easy=1000..1019`, `medium=2000..2019`.
 - Each world runs 3 trials by default.
 - Metrics are reported per difficulty and overall: `avg_score`, `pass@1`,
   `pass@3`, and `pass^3`.
@@ -91,7 +90,7 @@ python eval.py --model gpt-4o --max-steps 120 --output results/eval.json
 Run a smaller subset:
 
 ```bash
-# One world by index, 0-59
+# One world by index, 0-39
 python eval.py --world-idx 7 --n-runs 1 --output results/world_07.json
 
 # All worlds at one difficulty
@@ -126,8 +125,7 @@ score rewards cheaper investigation:
 min(1.0, baseline_cost / total_experiment_cost)
 ```
 
-The unsolvable baselines are `50.0` for easy, `100.0` for medium, and `200.0`
-for hard.
+The unsolvable baselines are `50.0` for easy and `100.0` for medium.
 
 ### Evaluation CLI
 
@@ -142,7 +140,7 @@ for hard.
 | `--output` | Final JSON output path. Default: `eval_results_<timestamp>.json`. |
 | `--quiet` | Reduce logging verbosity. |
 | `--world-idx` | Run only one world index, from `0` to `59`. |
-| `--difficulty` | Run only `easy`, `medium`, or `hard` worlds. |
+| `--difficulty` | Run only `easy` or `medium` worlds. |
 | `--n-runs` | Trials per world. Default: `3`. |
 | `--resume` | Resume from a checkpoint/results JSON and skip completed worlds. |
 | `--list-worlds` | Print world indices, difficulties, and seeds, then exit. |

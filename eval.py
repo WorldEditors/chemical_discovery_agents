@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Evaluation script: runs the agent against xenoverse.sci_research_env and reports results.
+"""Evaluation script: runs the agent against xenoverse.chemverse and reports results.
 
-60 pre-sampled worlds (20 easy, 20 medium, 20 hard), each run 3 times.
+40 pre-sampled worlds (20 easy, 20 medium), each run 3 times.
 Reports: avg_score, pass@1, pass@3, pass^3 per difficulty and overall.
 """
 
@@ -21,8 +21,8 @@ _xenoverse_root = os.environ.get("XENOVERSE_ROOT", os.path.join(os.path.dirname(
 if os.path.isdir(_xenoverse_root):
     sys.path.insert(0, os.path.abspath(_xenoverse_root))
 
-from xenoverse.sci_research_env.environment.backend import SciResearchBackend
-from xenoverse.sci_research_env.task_sampler import SciResearchTaskSampler
+from xenoverse.chemverse.environment.backend import SciResearchBackend
+from xenoverse.chemverse.task_sampler import SciResearchTaskSampler
 from sci_agent import SciResearchAgent, AgentConfig
 from sci_agent.tools.env_adapter import EnvironmentToolAdapter
 
@@ -30,10 +30,10 @@ logger = logging.getLogger(__name__)
 
 WORLDS_PER_DIFFICULTY = 20
 RUNS_PER_WORLD = 3
-DIFFICULTIES = ["easy", "medium", "hard"]
-BASE_SEEDS = {"easy": 1000, "medium": 2000, "hard": 3000}
+DIFFICULTIES = ["easy", "medium"]
+BASE_SEEDS = {"easy": 1000, "medium": 2000}
 
-UNSOLVABLE_BASELINE_COST = {"easy": 50.0, "medium": 100.0, "hard": 200.0}
+UNSOLVABLE_BASELINE_COST = {"easy": 50.0, "medium": 100.0}
 
 
 def _fmt_g(g: float) -> str:
@@ -76,7 +76,7 @@ def _print_optimal_route(eval_result: Dict[str, Any]) -> None:
 
 
 def get_world_list() -> List[Dict[str, Any]]:
-    """Return list of 60 world specs: [{difficulty, seed, world_idx}, ...]"""
+    """Return list of 40 world specs: [{difficulty, seed, world_idx}, ...]"""
     worlds = []
     idx = 0
     for diff in DIFFICULTIES:
@@ -319,7 +319,7 @@ def main():
     parser.add_argument("--verbose", action="store_true", default=True)
     parser.add_argument("--quiet", action="store_true", default=False)
     parser.add_argument("--world-idx", type=int, default=None,
-                        help="Run only a specific world index (0-59)")
+                        help="Run only a specific world index (0-39)")
     parser.add_argument("--difficulty", type=str, choices=DIFFICULTIES, default=None,
                         help="Run only worlds of this difficulty")
     parser.add_argument("--n-runs", type=int, default=RUNS_PER_WORLD,
@@ -327,7 +327,7 @@ def main():
     parser.add_argument("--resume", type=str, default=None,
                         help="Resume from a previous checkpoint/results JSON file (skip completed worlds)")
     parser.add_argument("--list-worlds", action="store_true",
-                        help="List all 60 worlds and exit")
+                        help="List all 40 worlds and exit")
     args = parser.parse_args()
 
     if args.list_worlds:
@@ -437,7 +437,7 @@ def main():
     print(f"{'='*70}")
     print(f"\n{'Group':<10} {'N':<5} {'avg_score':<12} {'pass@1':<10} {'pass@3':<10} {'pass^3':<10}")
     print("-" * 57)
-    for group in ["easy", "medium", "hard", "overall"]:
+    for group in ["easy", "medium", "overall"]:
         if group in stats:
             s = stats[group]
             print(f"{group:<10} {s['n_worlds']:<5} {s['avg_score']:<12.4f} "
