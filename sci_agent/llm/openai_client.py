@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
-import base64
 from typing import Any, Dict, List, Optional
 
 from openai import OpenAI
@@ -13,17 +11,16 @@ from .base import BaseLLMClient, LLMResponse
 class OpenAIClient(BaseLLMClient):
     def __init__(
         self,
-        model: str = "Doubao-Seed-2.0-pro-offline",
+        model: str = "gpt-4o",
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
     ):
         self.model = model
+        final_key = (api_key or "").strip()
+        final_url = (base_url or "").strip() or None
 
-        app_id = "3355143598"
-        app_key = "tFRYXoUyzccALzPo"
-        encoded = base64.b64encode(app_key.encode("utf-8")).decode()
-        final_key = f"sk-xuanji-{app_id}-{encoded}"
-        final_url=f"https://chatgpt-api-pre.vmic.xyz/v1"
+        if not final_key:
+            raise ValueError("Missing LLM api_key. Set it in configs/default.json or pass a config file.")
 
         self._client = OpenAI(
             api_key=final_key,

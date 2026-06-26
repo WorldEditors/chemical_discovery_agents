@@ -9,8 +9,8 @@ from typing import Any, Dict, Optional
 @dataclass
 class AgentConfig:
     model: str = "gpt-4o"
-    api_key: Optional[str] = None
-    base_url: Optional[str] = None
+    api_key: str = ""
+    base_url: str = ""
     temperature: float = 0.7
     max_tokens: int = 4096
     max_steps: int = 50

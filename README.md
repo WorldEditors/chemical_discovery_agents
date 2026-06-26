@@ -14,7 +14,7 @@ and extracted chemical knowledge.
 |-- run.py                 # Run one agent session
 |-- eval.py                # Run the fixed 40-world evaluation benchmark
 |-- configs/
-|   `-- default.json       # Default AgentConfig values
+|   `-- default.json       # Default AgentConfig values, including LLM API settings
 `-- sci_agent/
     |-- agent.py           # ReAct reasoning loop
     |-- config.py          # Configuration dataclass and file loading
@@ -38,11 +38,13 @@ The project depends on `xenoverse`. Keep the Xenoverse repo next to this repo as
 export XENOVERSE_ROOT=/path/to/Xenoverse
 ```
 
-Set API credentials through CLI flags or environment variables:
+Set API credentials in `configs/default.json`:
 
 ```bash
-export OPENAI_API_KEY="your-key"
-export OPENAI_BASE_URL="https://your-endpoint/v1"  # optional
+{
+  "api_key": "your-key",
+  "base_url": "https://your-endpoint/v1"
+}
 ```
 
 ## Run One Agent Session
@@ -133,8 +135,6 @@ The unsolvable baselines are `50.0` for easy and `100.0` for medium.
 | --- | --- |
 | `--config` | Load an agent config file. |
 | `--model` | Override the LLM model name. |
-| `--api-key` | Override the API key. |
-| `--base-url` | Override the OpenAI-compatible API base URL. |
 | `--max-steps` | Max agent steps per trial. Default: `120`. |
 | `--memory-dir` | Persistent memory directory. Evaluation disables memory per trial internally to keep trials independent. |
 | `--output` | Final JSON output path. Default: `eval_results_<timestamp>.json`. |
@@ -170,8 +170,8 @@ print(result["memory_summary"])
 | Parameter | Default | Description |
 | --- | --- | --- |
 | `model` | `gpt-4o` | LLM model name. |
-| `api_key` | `None` | API key, or `OPENAI_API_KEY` from the environment. |
-| `base_url` | `None` | API endpoint, or `OPENAI_BASE_URL` from the environment. |
+| `api_key` | `""` | API key, read from the config file. |
+| `base_url` | `""` | OpenAI-compatible API endpoint, read from the config file. |
 | `temperature` | `0.7` | Sampling temperature. |
 | `max_tokens` | `4096` | Maximum output tokens for one LLM call. |
 | `max_steps` | `50` | Maximum agent steps for `run.py`; `eval.py` defaults to `120`. |

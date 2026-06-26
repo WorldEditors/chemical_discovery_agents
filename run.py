@@ -17,8 +17,6 @@ def main():
     parser = argparse.ArgumentParser(description="Run the scientific research agent.")
     parser.add_argument("--config", type=str, default=None, help="Path to config file (JSON or YAML)")
     parser.add_argument("--model", type=str, default=None, help="LLM model name")
-    parser.add_argument("--api-key", type=str, default=None, help="API key (or set OPENAI_API_KEY env var)")
-    parser.add_argument("--base-url", type=str, default=None, help="API base URL (or set OPENAI_BASE_URL env var)")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for world generation")
     parser.add_argument("--complexity", type=str, choices=["easy", "medium", "hard"], default=None)
     parser.add_argument("--max-steps", type=int, default=None, help="Maximum agent steps")
@@ -38,10 +36,6 @@ def main():
 
     if args.model:
         config.model = args.model
-    if args.api_key:
-        config.api_key = args.api_key
-    if args.base_url:
-        config.base_url = args.base_url
     if args.seed is not None:
         config.seed = args.seed
     if args.complexity:

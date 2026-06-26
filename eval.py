@@ -311,8 +311,6 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate the scientific research agent.")
     parser.add_argument("--config", type=str, default=None, help="Path to agent config file")
     parser.add_argument("--model", type=str, default=None, help="LLM model name")
-    parser.add_argument("--api-key", type=str, default=None, help="API key")
-    parser.add_argument("--base-url", type=str, default=None, help="API base URL")
     parser.add_argument("--max-steps", type=int, default=120, help="Max agent steps per world")
     parser.add_argument("--memory-dir", type=str, default=None, help="Persistent memory directory")
     parser.add_argument("--output", type=str, default=None, help="Save results to JSON file")
@@ -341,14 +339,14 @@ def main():
     if args.config:
         config = AgentConfig.from_file(args.config)
     else:
-        config = AgentConfig()
+        default_config = os.path.join(os.path.dirname(__file__), "configs", "default.json")
+        if os.path.exists(default_config):
+            config = AgentConfig.from_file(default_config)
+        else:
+            config = AgentConfig()
 
     if args.model:
         config.model = args.model
-    if args.api_key:
-        config.api_key = args.api_key
-    if args.base_url:
-        config.base_url = args.base_url
     config.max_steps = args.max_steps
     if args.memory_dir:
         config.memory_dir = args.memory_dir

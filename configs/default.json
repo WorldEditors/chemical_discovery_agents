@@ -1,7 +1,7 @@
 {
   "model": "gpt-4o",
-  "api_key": null,
-  "base_url": null,
+  "api_key": "",
+  "base_url": "",
   "temperature": 0.7,
   "max_tokens": 4096,
   "max_steps": 50,
