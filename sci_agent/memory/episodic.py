@@ -99,17 +99,19 @@ class EpisodicMemory:
             "episodes": [e.to_dict() for e in self._episodes],
             "summaries": [s.to_dict() for s in self._summaries],
         }
-        with open(self.storage_path, "w") as f:
+        with open(self.storage_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
     def _load(self) -> None:
-        try:
-            with open(self.storage_path) as f:
-                data = json.load(f)
-            self._episodes = [Episode.from_dict(e) for e in data.get("episodes", [])]
-            self._summaries = [ExperimentSummary.from_dict(s) for s in data.get("summaries", [])]
-        except (json.JSONDecodeError, OSError, KeyError):
-            pass
+        for encoding in ("utf-8", "utf-8-sig", "gbk"):
+            try:
+                with open(self.storage_path, encoding=encoding) as f:
+                    data = json.load(f)
+                self._episodes = [Episode.from_dict(e) for e in data.get("episodes", [])]
+                self._summaries = [ExperimentSummary.from_dict(s) for s in data.get("summaries", [])]
+                return
+            except (UnicodeDecodeError, json.JSONDecodeError, OSError, KeyError):
+                continue
 
     @property
     def total_episodes(self) -> int:

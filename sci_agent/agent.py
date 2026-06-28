@@ -196,7 +196,12 @@ class SciResearchAgent:
                             self._best_score = score
 
                 if self.config.verbose:
-                    logger.info(f"  Tool: {tc['name']} -> {result_str[:200]}")
+                    logger.info(f"  Tool: {tc['name']} -> {result_str}")
+
+                if self._is_terminal_tool_result(result):
+                    if self.config.verbose:
+                        logger.info("Environment reported the experiment has ended. Stopping session.")
+                    return {"done": True}
 
             return {"done": False}
         else:
@@ -214,6 +219,23 @@ class SciResearchAgent:
             return self.env.dispatch(name, arguments)
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def _is_terminal_tool_result(self, result: Dict[str, Any]) -> bool:
+        if not isinstance(result, dict):
+            return False
+
+        terminal_markers = [
+            "experiment has ended",
+            "no further actions allowed",
+        ]
+
+        values_to_check = []
+        for key in ("message", "error", "note"):
+            value = result.get(key)
+            if isinstance(value, str):
+                values_to_check.append(value.lower())
+
+        return any(marker in value for value in values_to_check for marker in terminal_markers)
 
     def _is_done_signal(self, content: str) -> bool:
         if not content:

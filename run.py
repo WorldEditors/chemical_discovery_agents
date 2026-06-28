@@ -51,7 +51,7 @@ def main():
     logging.basicConfig(
         level=log_level,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=[logging.StreamHandler()],
+        handlers=[logging.StreamHandler(sys.stdout)],
     )
 
     if config.log_file:
@@ -61,18 +61,21 @@ def main():
 
     agent = SciResearchAgent(config=config)
 
-    print(f"Starting agent with model={config.model}, complexity={config.complexity_level}, seed={config.seed}")
-    print(f"Memory directory: {config.memory_dir}")
-    print(f"Max steps: {config.max_steps}")
-    print("-" * 60)
+    print(
+        f"Starting agent with model={config.model}, complexity={config.complexity_level}, seed={config.seed}",
+        flush=True,
+    )
+    print(f"Memory directory: {config.memory_dir}", flush=True)
+    print(f"Max steps: {config.max_steps}", flush=True)
+    print("-" * 60, flush=True)
 
     result = agent.run()
 
-    print("-" * 60)
-    print(f"Session complete.")
-    print(f"  Steps taken: {result['steps_taken']}")
-    print(f"  Best score: {result['best_score']}")
-    print(f"  Memory summary:\n{result['memory_summary']}")
+    print("-" * 60, flush=True)
+    print("Session complete.", flush=True)
+    print(f"  Steps taken: {result['steps_taken']}", flush=True)
+    print(f"  Best score: {result['best_score']}", flush=True)
+    print(f"  Memory summary:\n{result['memory_summary']}", flush=True)
 
 
 if __name__ == "__main__":
