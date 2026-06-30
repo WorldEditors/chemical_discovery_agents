@@ -8,17 +8,14 @@ from typing import Any, Dict, Optional
 
 @dataclass
 class AgentConfig:
-    model: str = "gpt-4o"
-    api_key: str = ""
-    base_url: str = ""
     temperature: float = 0.7
     max_tokens: int = 4096
     max_steps: int = 50
     max_retries: int = 3
 
     memory_dir: str = "./memory_store"
-    working_memory_max_messages: int = 80
-    working_memory_max_tokens: int = 32000
+    working_memory_max_messages: int = 240
+    working_memory_max_tokens: int = 96000
 
     complexity_level: Optional[str] = None
     seed: Optional[int] = None

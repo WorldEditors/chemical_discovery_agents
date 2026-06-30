@@ -10,13 +10,16 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+_xenoverse_root = os.environ.get("XENOVERSE_ROOT", os.path.join(os.path.dirname(__file__), "..", "Xenoverse"))
+if os.path.isdir(_xenoverse_root):
+    sys.path.insert(0, os.path.abspath(_xenoverse_root))
+
 from sci_agent import SciResearchAgent, AgentConfig
 
 
 def main():
     parser = argparse.ArgumentParser(description="Run the scientific research agent.")
-    parser.add_argument("--config", type=str, default=None, help="Path to config file (JSON or YAML)")
-    parser.add_argument("--model", type=str, default=None, help="LLM model name")
+    parser.add_argument("--config", type=str, default=None, help="Path to agent config file (JSON or YAML)")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for world generation")
     parser.add_argument("--complexity", type=str, choices=["easy", "medium", "hard"], default=None)
     parser.add_argument("--max-steps", type=int, default=None, help="Maximum agent steps")
@@ -28,14 +31,8 @@ def main():
     if args.config:
         config = AgentConfig.from_file(args.config)
     else:
-        default_config = os.path.join(os.path.dirname(__file__), "configs", "default.json")
-        if os.path.exists(default_config):
-            config = AgentConfig.from_file(default_config)
-        else:
-            config = AgentConfig()
+        config = AgentConfig()
 
-    if args.model:
-        config.model = args.model
     if args.seed is not None:
         config.seed = args.seed
     if args.complexity:
@@ -51,7 +48,7 @@ def main():
     logging.basicConfig(
         level=log_level,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=[logging.StreamHandler(sys.stdout)],
+        handlers=[logging.StreamHandler()],
     )
 
     if config.log_file:
@@ -61,21 +58,18 @@ def main():
 
     agent = SciResearchAgent(config=config)
 
-    print(
-        f"Starting agent with model={config.model}, complexity={config.complexity_level}, seed={config.seed}",
-        flush=True,
-    )
-    print(f"Memory directory: {config.memory_dir}", flush=True)
-    print(f"Max steps: {config.max_steps}", flush=True)
-    print("-" * 60, flush=True)
+    print(f"Starting agent with model={agent.llm.model}, complexity={config.complexity_level}, seed={config.seed}")
+    print(f"Memory directory: {config.memory_dir}")
+    print(f"Max steps: {config.max_steps}")
+    print("-" * 60)
 
     result = agent.run()
 
-    print("-" * 60, flush=True)
-    print("Session complete.", flush=True)
-    print(f"  Steps taken: {result['steps_taken']}", flush=True)
-    print(f"  Best score: {result['best_score']}", flush=True)
-    print(f"  Memory summary:\n{result['memory_summary']}", flush=True)
+    print("-" * 60)
+    print(f"Session complete.")
+    print(f"  Steps taken: {result['steps_taken']}")
+    print(f"  Best score: {result['best_score']}")
+    print(f"  Memory summary:\n{result['memory_summary']}")
 
 
 if __name__ == "__main__":

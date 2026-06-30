@@ -60,29 +60,51 @@ class MemoryManager:
         self, action: str, arguments: Dict[str, Any], observation: Dict[str, Any]
     ) -> None:
         if action == "analyze_compound":
-            compound_id = arguments.get("compound_id", "")
-            if isinstance(observation, dict) and observation.get("success", True):
+            compound_name = arguments.get("chemical_name", "") or arguments.get("compound_name", "") or arguments.get("compound_id", "")
+            if isinstance(observation, dict) and observation.get("success"):
                 props = {k: v for k, v in observation.items() if k not in ("success", "error")}
-                name = observation.get("name", compound_id)
-                self.semantic.update_compound(compound_id, name=name, properties=props)
+                name = observation.get("name", compound_name)
+                bio = observation.get("biological_activity", "")
+                medicinal_hints = []
+                if bio and bio not in ("low", "none", "minimal"):
+                    medicinal_hints.append(f"biological_activity={bio}")
+                toxicity_hints = []
+                tox = observation.get("toxicity_level", "")
+                if tox and tox not in ("low", "none"):
+                    toxicity_hints.append(f"toxicity_level={tox}")
+                self.semantic.update_compound(
+                    name, name=name, properties=props,
+                    medicinal_hints=medicinal_hints,
+                    toxicity_hints=toxicity_hints,
+                )
 
         elif action == "perform_reaction":
-            if isinstance(observation, dict) and observation.get("success", True):
-                rxn_id = observation.get("reaction_id", "")
-                products = observation.get("products", [])
+            if isinstance(observation, dict) and observation.get("success"):
+                products_g = observation.get("products_g", {})
                 reactants = list(arguments.get("reactant_amounts", {}).keys())
                 conditions = {
                     "temperature_C": arguments.get("temperature_C"),
                     "pressure_atm": arguments.get("pressure_atm"),
                     "duration_seconds": arguments.get("duration_seconds"),
                 }
-                if rxn_id:
-                    self.semantic.update_reaction(
-                        rxn_id,
-                        reactants=reactants,
-                        products=[p if isinstance(p, str) else p.get("name", "") for p in products]
-                        if isinstance(products, list) else [],
-                        observed_conditions=conditions,
+                product_names = list(products_g.keys()) if isinstance(products_g, dict) else []
+                rxn_key = "|".join(sorted(reactants))
+                self.semantic.update_reaction(
+                    rxn_key,
+                    reactants=reactants,
+                    products=product_names,
+                    observed_conditions=conditions,
+                    yield_observations={
+                        "conditions": conditions,
+                        "conversion": observation.get("conversion"),
+                        "products_g": products_g,
+                    },
+                )
+                for prod_name in product_names:
+                    self.semantic.update_compound(
+                        prod_name,
+                        name=prod_name,
+                        known_as_product_of=rxn_key,
                     )
 
         elif action == "estimate_cost":
@@ -99,13 +121,22 @@ class MemoryManager:
 
         elif action == "submit_solution":
             if isinstance(observation, dict):
-                score = observation.get("aggregate_score")
+                passed = observation.get("passed", False)
                 is_best = observation.get("is_new_best", False)
-                if score is not None and is_best:
+                target = arguments.get("target_compound", "?")
+                if passed and is_best:
+                    cost = observation.get("total_experiment_cost")
                     self.semantic.add_strategy(
-                        insight=f"Best submission so far: score={score}, target={arguments.get('target_compound')}",
+                        insight=f"Best passing submission: total_experiment_cost={cost}, target={target}",
                         confidence=0.9,
-                        tags=["submission", "best_score"],
+                        tags=["submission", "best_cost"],
+                    )
+                elif not passed:
+                    violations = observation.get("violations", [])
+                    self.semantic.add_strategy(
+                        insight=f"Rejected submission (target={target}): {'; '.join(violations[:3])}",
+                        confidence=0.5,
+                        tags=["submission", "rejected"],
                     )
 
     def compose_memory_context(self, max_chars: int = 4000) -> str:

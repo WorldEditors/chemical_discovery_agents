@@ -1,7 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from typing import Any, Dict, List, Optional
+
+_xenoverse_root = os.environ.get(
+    "XENOVERSE_ROOT",
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "Xenoverse"),
+)
+if os.path.isdir(_xenoverse_root) and _xenoverse_root not in sys.path:
+    sys.path.insert(0, os.path.abspath(_xenoverse_root))
 
 from xenoverse.chemverse.environment.backend import SciResearchBackend
 

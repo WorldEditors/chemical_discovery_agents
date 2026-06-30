@@ -173,26 +173,24 @@ class SemanticMemory:
             "reactions": {k: v.to_dict() for k, v in self._reactions.items()},
             "strategies": [s.to_dict() for s in self._strategies],
         }
-        with open(self.storage_path, "w", encoding="utf-8") as f:
+        with open(self.storage_path, "w") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
     def _load(self) -> None:
-        for encoding in ("utf-8", "utf-8-sig", "gbk"):
-            try:
-                with open(self.storage_path, encoding=encoding) as f:
-                    data = json.load(f)
-                self._world_id = data.get("world_id")
-                self._compounds = {
-                    k: CompoundKnowledge.from_dict(v)
-                    for k, v in data.get("compounds", {}).items()
-                }
-                self._reactions = {
-                    k: ReactionKnowledge.from_dict(v)
-                    for k, v in data.get("reactions", {}).items()
-                }
-                self._strategies = [
-                    StrategyKnowledge.from_dict(s) for s in data.get("strategies", [])
-                ]
-                return
-            except (UnicodeDecodeError, json.JSONDecodeError, OSError, KeyError):
-                continue
+        try:
+            with open(self.storage_path) as f:
+                data = json.load(f)
+            self._world_id = data.get("world_id")
+            self._compounds = {
+                k: CompoundKnowledge.from_dict(v)
+                for k, v in data.get("compounds", {}).items()
+            }
+            self._reactions = {
+                k: ReactionKnowledge.from_dict(v)
+                for k, v in data.get("reactions", {}).items()
+            }
+            self._strategies = [
+                StrategyKnowledge.from_dict(s) for s in data.get("strategies", [])
+            ]
+        except (json.JSONDecodeError, OSError, KeyError):
+            pass

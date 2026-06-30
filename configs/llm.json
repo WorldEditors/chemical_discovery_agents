@@ -1,0 +1,7 @@
+{
+  "model": "Ali-DeepSeek-V4-Pro",
+  "api_key": "sk-xuanji-4331232762-Y29LYUFXc0tsekdqS0RtbA==",
+  "base_url": "https://chatgpt-api-pre.vmic.xyz/v1",
+  "timeout": 120.0,
+  "max_retries": 3
+}

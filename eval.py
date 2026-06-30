@@ -21,17 +21,31 @@ _xenoverse_root = os.environ.get("XENOVERSE_ROOT", os.path.join(os.path.dirname(
 if os.path.isdir(_xenoverse_root):
     sys.path.insert(0, os.path.abspath(_xenoverse_root))
 
+import numpy as np
+
 from xenoverse.chemverse.environment.backend import SciResearchBackend
-from xenoverse.chemverse.task_sampler import SciResearchTaskSampler
+from xenoverse.chemverse.task_sampler import (
+    _sample_constraints,
+    _public_task_brief,
+    _world_summary,
+)
+from xenoverse.chemverse.world_gen.models import World
 from sci_agent import SciResearchAgent, AgentConfig
 from sci_agent.tools.env_adapter import EnvironmentToolAdapter
+from sci_agent.llm.openai_client import _load_llm_config, DEFAULT_LLM_CONFIG_PATH
 
 logger = logging.getLogger(__name__)
+
+MODEL_NAME = _load_llm_config(DEFAULT_LLM_CONFIG_PATH).get("model")
 
 WORLDS_PER_DIFFICULTY = 20
 RUNS_PER_WORLD = 3
 DIFFICULTIES = ["easy", "medium"]
-BASE_SEEDS = {"easy": 1000, "medium": 2000}
+
+WORLDS_DIR = os.path.join(
+    os.path.abspath(_xenoverse_root), "xenoverse", "chemverse", "worlds"
+)
+MANIFEST_FILE = "eval40_manifest.json"
 
 UNSOLVABLE_BASELINE_COST = {"easy": 50.0, "medium": 100.0}
 
@@ -76,28 +90,52 @@ def _print_optimal_route(eval_result: Dict[str, Any]) -> None:
 
 
 def get_world_list() -> List[Dict[str, Any]]:
-    """Return list of 40 world specs: [{difficulty, seed, world_idx}, ...]"""
+    """Return the 40 pre-generated world specs from the worlds manifest."""
+    manifest_path = os.path.join(WORLDS_DIR, MANIFEST_FILE)
+    if not os.path.isfile(manifest_path):
+        raise FileNotFoundError(
+            f"World manifest not found: {manifest_path}. "
+            f"Expected pre-generated worlds under {WORLDS_DIR}."
+        )
+    with open(manifest_path) as f:
+        manifest = json.load(f)
     worlds = []
-    idx = 0
-    for diff in DIFFICULTIES:
-        base = BASE_SEEDS[diff]
-        for i in range(WORLDS_PER_DIFFICULTY):
-            worlds.append({
-                "world_idx": idx,
-                "difficulty": diff,
-                "seed": base + i,
-            })
-            idx += 1
+    for entry in manifest:
+        spec = dict(entry)
+        spec["seed"] = entry.get("actual_task_seed", entry.get("requested_seed"))
+        worlds.append(spec)
+    worlds.sort(key=lambda w: w["world_idx"])
     return worlds
 
 
-def presample_task(difficulty: str, seed: int) -> Dict[str, Any]:
-    """Pre-sample a task dict for the given difficulty and seed."""
-    return SciResearchTaskSampler(
-        seed=seed,
-        complexity_level=difficulty,
-        use_backward_design=True,
-    )
+def presample_task(world_spec: Dict[str, Any]) -> Dict[str, Any]:
+    """Load a pre-generated world file and build its portable task dict.
+
+    The world structure is read from disk; constraints are reconstructed
+    deterministically from the requested seed (matching how the worlds were
+    originally sampled).
+    """
+    world_path = os.path.join(WORLDS_DIR, world_spec["file"])
+    with open(world_path) as f:
+        world = json.load(f)
+
+    requested_seed = world_spec["requested_seed"]
+    difficulty = world_spec["difficulty"]
+    rng = np.random.RandomState(requested_seed)
+    constraints = _sample_constraints(rng, difficulty)
+    world_obj = World.from_dict(world)
+
+    return {
+        "task_type": "SCI_RESEARCH",
+        "task_name": "procedural_chemistry_world",
+        "seed": world_spec.get("actual_task_seed", requested_seed),
+        "complexity_level": difficulty,
+        "constraints": constraints,
+        "is_solvable": world_spec.get("is_solvable", True),
+        "public_task": _public_task_brief(constraints),
+        "world": world,
+        "summary": _world_summary(world_obj),
+    }
 
 
 def run_single_trial(
@@ -295,7 +333,7 @@ def _save_checkpoint(config: AgentConfig, args, world_results: List[Dict[str, An
     stats = compute_statistics(world_results) if world_results else {}
     output_data = {
         "config": {
-            "model": config.model,
+            "model": MODEL_NAME,
             "max_steps": config.max_steps,
             "n_runs": args.n_runs,
         },
@@ -310,7 +348,6 @@ def _save_checkpoint(config: AgentConfig, args, world_results: List[Dict[str, An
 def main():
     parser = argparse.ArgumentParser(description="Evaluate the scientific research agent.")
     parser.add_argument("--config", type=str, default=None, help="Path to agent config file")
-    parser.add_argument("--model", type=str, default=None, help="LLM model name")
     parser.add_argument("--max-steps", type=int, default=120, help="Max agent steps per world")
     parser.add_argument("--memory-dir", type=str, default=None, help="Persistent memory directory")
     parser.add_argument("--output", type=str, default=None, help="Save results to JSON file")
@@ -339,14 +376,8 @@ def main():
     if args.config:
         config = AgentConfig.from_file(args.config)
     else:
-        default_config = os.path.join(os.path.dirname(__file__), "configs", "default.json")
-        if os.path.exists(default_config):
-            config = AgentConfig.from_file(default_config)
-        else:
-            config = AgentConfig()
+        config = AgentConfig()
 
-    if args.model:
-        config.model = args.model
     config.max_steps = args.max_steps
     if args.memory_dir:
         config.memory_dir = args.memory_dir
@@ -369,7 +400,7 @@ def main():
         worlds = [w for w in worlds if w["difficulty"] == args.difficulty]
 
     print(f"Evaluation Configuration:")
-    print(f"  Model: {config.model}")
+    print(f"  Model: {MODEL_NAME}")
     print(f"  Max steps: {config.max_steps}")
     print(f"  Runs per world: {args.n_runs}")
     print(f"  Worlds to evaluate: {len(worlds)}")
@@ -393,7 +424,7 @@ def main():
     print("Pre-sampling tasks...")
     tasks: Dict[int, Dict[str, Any]] = {}
     for w in worlds:
-        tasks[w["world_idx"]] = presample_task(w["difficulty"], w["seed"])
+        tasks[w["world_idx"]] = presample_task(w)
     print(f"  {len(tasks)} tasks sampled successfully.")
 
     output_file = args.output or f"eval_results_{int(time.time())}.json"
@@ -443,7 +474,7 @@ def main():
 
     output_data = {
         "config": {
-            "model": config.model,
+            "model": MODEL_NAME,
             "max_steps": config.max_steps,
             "n_runs": args.n_runs,
         },
@@ -463,4 +494,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
