@@ -230,7 +230,7 @@ NODE_COLORS = {
 }
 
 
-def draw(analysis: Dict[str, Any], out_path: str) -> None:
+def draw_on_ax(analysis: Dict[str, Any], ax) -> None:
     chems = analysis["chemicals"]
     rxns = analysis["reactions"]
     targets = analysis["targets"]
@@ -286,18 +286,15 @@ def draw(analysis: Dict[str, Any], out_path: str) -> None:
             edge_color_node.append("#2d3436")
             linewidths.append(0.8)
 
-    fig_w = max(12, layer_width * 2.0)
-    fig_h = max(7, max_layer * 2.2)
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-
+    node_size = 500
     nx.draw_networkx_edges(
-        G, pos, ax=ax, edge_color="#7f8c8d", width=1.0,
-        arrows=True, arrowstyle="-|>", arrowsize=14, alpha=0.7,
-        node_size=2600,
+        G, pos, ax=ax, edge_color="#7f8c8d", width=0.8,
+        arrows=True, arrowstyle="-|>", arrowsize=8, alpha=0.7,
+        node_size=node_size,
     )
     nx.draw_networkx_nodes(
         G, pos, ax=ax, node_color=node_color, edgecolors=edge_color_node,
-        linewidths=linewidths, node_size=2600,
+        linewidths=[w * 0.6 for w in linewidths], node_size=node_size,
     )
 
     # Layer guides
@@ -305,40 +302,42 @@ def draw(analysis: Dict[str, Any], out_path: str) -> None:
         ax.text(-0.4, max_layer - lay, f"L{lay}", fontsize=9, color="#636e72",
                 ha="right", va="center", fontweight="bold")
 
-    c = analysis["constraints"]
-    solvable_tag = "SOLVABLE" if analysis["is_solvable"] else "UNSOLVABLE"
     trials = analysis.get("trials", [])
     from collections import Counter
     tc = Counter(trials)
-    if trials:
-        verdict_str = (
-            f"Agent ({len(trials)} trials): "
-            f"SOLVED={tc.get('SOLVED',0)} "
-            f"DECLARED_UNSOLVABLE={tc.get('DECLARED_UNSOLVABLE',0)} "
-            f"FAILED={tc.get('FAILED',0)}"
-        )
-    else:
-        verdict_str = "Agent: no finish_experiment recorded"
 
-    # Correctness vs ground truth
+    # Correctness vs ground truth -> PASS count out of total trials.
     if analysis["is_solvable"]:
         correct = tc.get("SOLVED", 0)
-        incorrect = tc.get("DECLARED_UNSOLVABLE", 0) + tc.get("FAILED", 0)
     else:
         correct = tc.get("DECLARED_UNSOLVABLE", 0)
-        incorrect = tc.get("SOLVED", 0) + tc.get("FAILED", 0)
-    verdict_color = "#27ae60" if correct > incorrect else ("#c0392b" if incorrect > 0 else "#7f8c8d")
+    total = len(trials)
+    verdict_color = "#27ae60" if (total and correct == total) else (
+        "#c0392b" if total else "#7f8c8d")
 
     title = (
-        f"World {analysis['world_idx']:02d} | {analysis['difficulty']} | seed={analysis['seed']}  "
-        f"| ground-truth: {solvable_tag}\n"
-        f"{verdict_str}\n"
-        f"med>={c['min_medicinal']}, tox<{c['max_toxicity']}, yield>{c['min_yield_g']}g  "
-        f"| targets={len(targets)} reached={sum(1 for v in status.values() if v=='reached')} "
-        f"tried_failed={sum(1 for v in status.values() if v=='tried_failed')}"
+        f"World {analysis['world_idx']:02d} | {analysis['difficulty']} | "
+        f"PASS {correct}/{total}"
     )
-    ax.set_title(title, fontsize=11, color=verdict_color)
+    ax.set_title(title, fontsize=20, color=verdict_color)
     ax.set_axis_off()
+
+
+MAX_COLS = 6
+
+
+def draw_grid(analyses: List[Dict[str, Any]], out_path: str) -> None:
+    """Draw all world subgraphs into a single big figure (max 6 per row)."""
+    n = len(analyses)
+    cols = min(MAX_COLS, n)
+    rows = (n + cols - 1) // cols
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 6.0, rows * 6.5))
+    axes = [axes] if n == 1 else list(axes.flat)
+
+    for ax, analysis in zip(axes, analyses):
+        draw_on_ax(analysis, ax)
+    for ax in axes[n:]:
+        ax.set_axis_off()
 
     from matplotlib.patches import Patch
     legend = [
@@ -351,9 +350,10 @@ def draw(analysis: Dict[str, Any], out_path: str) -> None:
         Patch(facecolor="white", edgecolor="#f1c40f", linewidth=3,
               label="Target-eligible (med/tox OK)"),
     ]
-    ax.legend(handles=legend, loc="lower left", fontsize=8, frameon=True, framealpha=0.9)
+    fig.legend(handles=legend, loc="lower center", ncol=4, fontsize=12,
+               frameon=True, framealpha=0.9)
 
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
     fig.savefig(out_path, dpi=140)
     plt.close(fig)
 
@@ -376,6 +376,7 @@ def main() -> None:
     print(f"  found {len(worlds)} world block(s)")
 
     summary: List[Dict[str, Any]] = []
+    analyses: List[Dict[str, Any]] = []
     for w in worlds:
         if args.only and w["world_idx"] not in args.only:
             continue
@@ -384,10 +385,7 @@ def main() -> None:
         except Exception as e:
             print(f"  World {w['world_idx']:02d}: FAILED to resample: {e}")
             continue
-        out_png = os.path.join(
-            args.outdir, f"world_{w['world_idx']:02d}_{w['difficulty']}_tree.png"
-        )
-        draw(analysis, out_png)
+        analyses.append(analysis)
         reached = sum(1 for v in analysis["product_status"].values() if v == "reached")
         failed = sum(1 for v in analysis["product_status"].values() if v == "tried_failed")
         summary.append({
@@ -402,12 +400,15 @@ def main() -> None:
             "num_targets": len(analysis["targets"]),
             "num_reached": reached,
             "num_tried_failed": failed,
-            "image": out_png,
         })
         print(f"  World {analysis['world_idx']:02d} ({analysis['difficulty']}): "
               f"chems={len(analysis['chemicals'])}, reactions={len(analysis['reactions'])}, "
-              f"targets={len(analysis['targets'])}, reached={reached}, tried_failed={failed} "
-              f"-> {out_png}")
+              f"targets={len(analysis['targets'])}, reached={reached}, tried_failed={failed}")
+
+    if analyses:
+        out_png = os.path.join(args.outdir, "world_chem_tree_all.png")
+        draw_grid(analyses, out_png)
+        print(f"Wrote combined figure: {out_png}")
 
     spath = os.path.join(args.outdir, "world_chem_tree_summary.json")
     with open(spath, "w", encoding="utf-8") as f:
