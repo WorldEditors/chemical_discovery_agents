@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import copy
 import logging
 import os
 import time
@@ -13,6 +14,22 @@ from .base import BaseLLMClient, LLMResponse
 logger = logging.getLogger(__name__)
 
 _NON_RETRYABLE_ERROR_CODES = {"1010"}
+
+
+def _chat_base_url(base_url: Optional[str]) -> Optional[str]:
+    """Accept an API root or a mistakenly supplied generation endpoint."""
+    if not base_url:
+        return base_url
+    normalized = base_url.rstrip("/")
+    for endpoint in ("/chat/completions", "/responses"):
+        if normalized.endswith(endpoint):
+            api_root = normalized[:-len(endpoint)]
+            logger.warning(
+                "Chat Completions requires an API root as base_url; using %s instead of %s",
+                api_root, base_url,
+            )
+            return api_root
+    return base_url
 
 
 def _describe_messages(messages: List[Dict[str, Any]]) -> str:
@@ -72,9 +89,10 @@ class OpenAIClient(BaseLLMClient):
 
         self._client = OpenAI(
             api_key=api_key or cfg.get("api_key"),
-            base_url=base_url or cfg.get("base_url"),
+            base_url=_chat_base_url(base_url or cfg.get("base_url")),
             timeout=self._timeout,
         )
+        self.last_request_payload: Optional[Dict[str, Any]] = None
 
     def chat(
         self,
@@ -93,6 +111,11 @@ class OpenAIClient(BaseLLMClient):
         if tools:
             call_kwargs["tools"] = tools
             call_kwargs["tool_choice"] = "auto"
+            if self.model == "gpt-6-sol":
+                # This model supports function calling through Chat Completions
+                # only when reasoning is disabled.
+                call_kwargs["reasoning_effort"] = "none"
+        self.last_request_payload = copy.deepcopy(call_kwargs)
 
         last_error = None
         response = None

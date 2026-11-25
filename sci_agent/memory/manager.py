@@ -145,11 +145,14 @@ class MemoryManager:
 
         semantic_summary = self.semantic.summarize()
         if semantic_summary.strip():
-            parts.append(f"[Knowledge Base]\n{semantic_summary}")
+            parts.append(
+                "[Memory from prior sessions; world-specific facts are unverified here]\n"
+                + semantic_summary
+            )
 
         recent_episodes = self.episodic.get_recent(5)
         if recent_episodes:
-            lines = ["[Recent Experiment History]"]
+            lines = ["[Recent Experiment History; possibly another world]"]
             for ep in recent_episodes:
                 outcome = ep.outcome_quality or "unknown"
                 lines.append(f"  - {ep.action}({json.dumps(ep.arguments, ensure_ascii=False)[:80]}) -> {outcome}")
@@ -159,7 +162,10 @@ class MemoryManager:
         if past_summaries:
             lines = ["[Past Session Insights]"]
             for s in past_summaries:
-                lines.append(f"  - World {s.world_id}: best_score={s.best_score}, discoveries={s.key_discoveries[:3]}")
+                lines.append(
+                    f"  - Prior session {s.world_id} (seed={s.seed}): "
+                    f"best_score={s.best_score}, discoveries={s.key_discoveries[:3]}"
+                )
             parts.append("\n".join(lines))
 
         context = "\n\n".join(parts)

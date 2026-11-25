@@ -24,6 +24,8 @@ def main():
     parser.add_argument("--complexity", type=str, choices=["easy", "medium", "hard"], default=None)
     parser.add_argument("--max-steps", type=int, default=None, help="Maximum agent steps")
     parser.add_argument("--memory-dir", type=str, default=None, help="Directory for persistent memory")
+    parser.add_argument("--trajectory-dir", type=str, default=None,
+                        help="Directory for fm_traj.jsonl and e2e_traj.jsonl")
     parser.add_argument("--verbose", action="store_true", default=True)
     parser.add_argument("--quiet", action="store_true", default=False)
     args = parser.parse_args()
@@ -41,6 +43,8 @@ def main():
         config.max_steps = args.max_steps
     if args.memory_dir:
         config.memory_dir = args.memory_dir
+    if args.trajectory_dir:
+        config.trajectory_dir = args.trajectory_dir
     if args.quiet:
         config.verbose = False
 
@@ -60,6 +64,7 @@ def main():
 
     print(f"Starting agent with model={agent.llm.model}, complexity={config.complexity_level}, seed={config.seed}")
     print(f"Memory directory: {config.memory_dir}")
+    print(f"Trajectory directory: {config.trajectory_dir}")
     print(f"Max steps: {config.max_steps}")
     print("-" * 60)
 

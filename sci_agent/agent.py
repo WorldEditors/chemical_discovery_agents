@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import copy
 import logging
 import time
 import traceback
@@ -14,16 +15,21 @@ from .memory.working import WorkingMemory
 from .memory.episodic import EpisodicMemory
 from .memory.semantic import SemanticMemory
 from .tools.env_adapter import EnvironmentToolAdapter
+from .trace import TrajectoryRecorder
 
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT_TEMPLATE = """\
-You are a scientific research agent exploring a completely unfamiliar chemistry world.
-Real-world chemical knowledge does NOT apply — all compound names, reactions, and properties
-are unique to this world. You must discover everything empirically through experimentation.
+You are a scientific research agent exploring a chemistry world whose specific
+compounds, reactions, and properties must be established empirically.
+Real-world chemical facts do not establish the rules of this simulated world.
 
 CRITICAL EPISTEMIC PRINCIPLE:
-You have ZERO prior knowledge about this world. Do NOT assume anything about:
+This session may revisit a previous world, or it may be a different world.
+Prior-session memory is useful as a source of hypotheses, not verified facts
+about the current world. Compare current observations with remembered evidence
+before reusing a compound property or reaction route. Keep general experimental
+strategies, but revalidate world-specific claims. Do NOT assume anything about:
 - How many reactants a reaction requires (could be 1, 2, 3, 4, or more)
 - Which chemicals are "reactive" vs "inert" — you cannot tell until you try
 - What temperature or pressure is needed — vary systematically
@@ -204,6 +210,10 @@ class SciResearchAgent:
         self._best_score: Optional[float] = None
         self._session_active = False
         self._consecutive_no_tool = 0
+        self._trace: Optional[TrajectoryRecorder] = None
+        self._current_seed: Optional[int] = None
+        self._episode_start = 0
+        self._strategy_start = 0
 
     def run(
         self,
@@ -212,6 +222,8 @@ class SciResearchAgent:
         task: Optional[Dict[str, Any]] = None,
         max_steps: Optional[int] = None,
         close_on_finish: bool = True,
+        trace_context: Optional[Dict[str, Any]] = None,
+        session_intro: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Run a full exploration session.
 
@@ -221,6 +233,8 @@ class SciResearchAgent:
             task: Pre-built task dict (skips sampling if provided).
             max_steps: Override max steps from config.
             close_on_finish: Whether to close the environment session when done.
+            trace_context: Optional evaluator metadata written to trajectory records.
+            session_intro: Agent-visible notice about this session's world transition.
 
         Returns:
             Session result dict with best_score, steps_taken, and summary.
@@ -228,6 +242,24 @@ class SciResearchAgent:
         max_steps = max_steps or self.config.max_steps
         self._step_count = 0
         self._best_score = None
+        self._consecutive_no_tool = 0
+        self._current_seed = task.get("seed") if task is not None else (
+            seed if seed is not None else self.config.seed
+        )
+        self.memory.reset_working()
+        self._episode_start = self.memory.episodic.total_episodes
+        self._strategy_start = len(self.memory.semantic.get_strategies())
+        self._trace = (
+            TrajectoryRecorder(self.config.trajectory_dir, trace_context)
+            if self.config.trajectory_dir else None
+        )
+        self.env.trace_sink = self._trace.record_e2e if self._trace else None
+        self.env.trace_step = 0
+        if session_intro and self._trace:
+            self._trace.record_e2e(
+                event="world_transition", step=0, session_id=None,
+                input={}, output={"announcement": session_intro},
+            )
 
         if task:
             session_info = self.env.load_session(task)
@@ -257,7 +289,8 @@ class SciResearchAgent:
         self.memory.working.set_system(system_prompt)
 
         observation_text = json.dumps(session_info.get("observation", {}), ensure_ascii=False)
-        self.memory.working.add_message("user", f"Session started. Initial observation:\n{observation_text}")
+        intro = f"{session_intro}\n\n" if session_intro else ""
+        self.memory.working.add_message("user", f"{intro}Session started. Initial observation:\n{observation_text}")
 
         tools_schema = self.env.get_openai_tools_schema()
 
@@ -291,6 +324,7 @@ class SciResearchAgent:
 
     def _step(self, tools_schema: List[Dict[str, Any]]) -> Dict[str, Any]:
         self._step_count += 1
+        self.env.trace_step = self._step_count
 
         if self.config.verbose:
             print(f"\n{'─'*50}")
@@ -300,12 +334,45 @@ class SciResearchAgent:
         self._inject_progress_context()
 
         messages = self.memory.working.get_messages()
-        response = self.llm.chat(
-            messages=messages,
-            tools=tools_schema,
-            temperature=self.config.temperature,
-            max_tokens=self.config.max_tokens,
-        )
+        agent_input = {
+            "messages": copy.deepcopy(messages),
+            "tools": copy.deepcopy(tools_schema),
+            "temperature": self.config.temperature,
+            "max_tokens": self.config.max_tokens,
+        }
+        try:
+            response = self.llm.chat(
+                messages=messages,
+                tools=tools_schema,
+                temperature=self.config.temperature,
+                max_tokens=self.config.max_tokens,
+            )
+        except Exception as exc:
+            if self._trace:
+                self._trace.record_fm(
+                    step=self._step_count,
+                    session_id=self.env.session_id,
+                    input={
+                        "agent_call": agent_input,
+                        "provider_request": getattr(self.llm, "last_request_payload", None),
+                    },
+                    error=str(exc),
+                )
+            raise
+        if self._trace:
+            self._trace.record_fm(
+                step=self._step_count,
+                session_id=self.env.session_id,
+                input={
+                    "agent_call": agent_input,
+                    "provider_request": getattr(self.llm, "last_request_payload", None),
+                },
+                output=response.raw if response.raw is not None else {
+                    "content": response.content,
+                    "tool_calls": response.tool_calls,
+                    "usage": response.usage,
+                },
+            )
 
         if response.has_tool_calls:
             self._consecutive_no_tool = 0
@@ -415,10 +482,10 @@ class SciResearchAgent:
         except Exception:
             pass
 
-        # Discovered compounds from semantic memory
+        # The semantic store can contain observations from other worlds.
         compounds = self.memory.semantic.get_all_compounds()
         if compounds:
-            progress_lines.append(f"  Discovered compounds ({len(compounds)}):")
+            progress_lines.append(f"  Compounds in memory ({len(compounds)}; verify in this world):")
             for ck in compounds[:15]:
                 props = ck.properties
                 desc_parts = [ck.name]
@@ -435,7 +502,7 @@ class SciResearchAgent:
         # Discovered reactions from semantic memory
         reactions = self.memory.semantic.get_all_reactions()
         if reactions:
-            progress_lines.append(f"  Discovered reactions ({len(reactions)}):")
+            progress_lines.append(f"  Reactions in memory ({len(reactions)}; verify in this world):")
             for rk in reactions[:10]:
                 reactants_str = " + ".join(rk.reactants) if rk.reactants else "?"
                 products_str = " + ".join(rk.products) if rk.products else "?"
@@ -459,12 +526,12 @@ class SciResearchAgent:
         # Medicinal candidates
         medicinal = self.memory.semantic.get_compounds_with_medicinal_hints()
         if medicinal:
-            progress_lines.append(f"  Medicinal candidates: {[c.name for c in medicinal[:5]]}")
+            progress_lines.append(f"  Remembered medicinal candidates (unverified here): {[c.name for c in medicinal[:5]]}")
 
         # Strategic insights
         strategies = self.memory.semantic.get_strategies(min_confidence=0.7)
         if strategies:
-            progress_lines.append("  Key insights:")
+            progress_lines.append("  Memory insights (may come from other worlds):")
             for s in strategies[-3:]:
                 progress_lines.append(f"    - {s.insight}")
 
@@ -552,22 +619,37 @@ class SciResearchAgent:
             return
         self._session_active = False
 
+        session_episodes = self.memory.episodic._episodes[self._episode_start:]
         key_discoveries = []
-        for ck in self.memory.semantic.get_compounds_with_medicinal_hints():
-            key_discoveries.append(f"Medicinal compound: {ck.name}")
+        for episode in session_episodes:
+            if episode.action == "analyze_compound" and episode.observation.get("success"):
+                name = episode.observation.get("name") or episode.arguments.get("chemical_name")
+                if name:
+                    discovery = f"Analyzed compound: {name}"
+                    if discovery not in key_discoveries:
+                        key_discoveries.append(discovery)
 
-        strategies = self.memory.semantic.get_strategies(min_confidence=0.5)
+        strategies = self.memory.semantic.get_strategies()[self._strategy_start:]
         cost_insights = [s.insight for s in strategies if "cost" in s.insight.lower()]
 
         self.memory.create_session_summary(
             world_id=self.env.session_id or "unknown",
-            seed=self.config.seed or 0,
+            seed=self._current_seed if self._current_seed is not None else 0,
             best_score=self._best_score,
             key_discoveries=key_discoveries[:10],
             cost_insights=cost_insights[:5],
         )
 
         self.memory.save_all()
+
+        if self._trace:
+            self._trace.record_e2e(
+                event="session_end",
+                step=self._step_count,
+                session_id=self.env.session_id,
+                input={},
+                output={"best_score": self._best_score, "steps_taken": self._step_count},
+            )
 
         if close_env:
             self.env.close()

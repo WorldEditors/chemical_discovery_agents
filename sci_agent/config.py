@@ -13,7 +13,8 @@ class AgentConfig:
     max_steps: int = 50
     max_retries: int = 3
 
-    memory_dir: str = "./memory_store"
+    memory_dir: Optional[str] = "./memory_store"
+    trajectory_dir: Optional[str] = "./trajectories"
     working_memory_max_messages: int = 240
     working_memory_max_tokens: int = 96000
 

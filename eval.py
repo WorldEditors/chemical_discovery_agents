@@ -143,10 +143,13 @@ def run_single_trial(
     task: Dict[str, Any],
     trial_idx: int,
     difficulty: str = "easy",
+    world_idx: Optional[int] = None,
+    carry_memory: bool = False,
 ) -> Dict[str, Any]:
     """Run agent once on a pre-sampled task. Returns result dict with score."""
     trial_config = AgentConfig.from_dict(config.to_dict())
-    trial_config.memory_dir = None
+    if not carry_memory:
+        trial_config.memory_dir = None
 
     is_solvable = task.get("is_solvable", True)
 
@@ -155,7 +158,16 @@ def run_single_trial(
     agent = SciResearchAgent(config=trial_config, env_adapter=adapter)
 
     start_time = time.time()
-    result = agent.run(task=task, close_on_finish=False)
+    result = agent.run(
+        task=task,
+        close_on_finish=False,
+        trace_context={
+            "world_idx": world_idx,
+            "trial_idx": trial_idx,
+            "difficulty": difficulty,
+            "seed": task.get("seed"),
+        },
+    )
     elapsed = time.time() - start_time
 
     session_id = adapter.session_id
@@ -230,6 +242,7 @@ def evaluate_world(
     world_spec: Dict[str, Any],
     task: Dict[str, Any],
     n_runs: int = RUNS_PER_WORLD,
+    carry_memory: bool = False,
 ) -> Dict[str, Any]:
     """Run n_runs trials on a single world and collect results."""
     world_idx = world_spec["world_idx"]
@@ -246,7 +259,10 @@ def evaluate_world(
     trials = []
     for t in range(n_runs):
         print(f"\n  --- Trial {t+1}/{n_runs} ---")
-        trial_result = run_single_trial(config, task, trial_idx=t, difficulty=difficulty)
+        trial_result = run_single_trial(
+            config, task, trial_idx=t, difficulty=difficulty,
+            world_idx=world_idx, carry_memory=carry_memory,
+        )
         trials.append(trial_result)
         if not is_solvable:
             status = "CORRECT_NO_SOL" if trial_result.get("declared_no_solution") else "MISSED_NO_SOL"
@@ -350,6 +366,10 @@ def main():
     parser.add_argument("--config", type=str, default=None, help="Path to agent config file")
     parser.add_argument("--max-steps", type=int, default=120, help="Max agent steps per world")
     parser.add_argument("--memory-dir", type=str, default=None, help="Persistent memory directory")
+    parser.add_argument("--carry-memory", action="store_true",
+                        help="Carry memory between trials and worlds (requires --memory-dir)")
+    parser.add_argument("--trajectory-dir", type=str, default=None,
+                        help="Directory for fm_traj.jsonl and e2e_traj.jsonl")
     parser.add_argument("--output", type=str, default=None, help="Save results to JSON file")
     parser.add_argument("--verbose", action="store_true", default=True)
     parser.add_argument("--quiet", action="store_true", default=False)
@@ -372,6 +392,9 @@ def main():
         for w in worlds:
             print(f"{w['world_idx']:<5} {w['difficulty']:<10} {w['seed']:<8}")
         return
+
+    if args.carry_memory and not args.memory_dir:
+        parser.error("--carry-memory requires an explicit --memory-dir")
 
     if args.config:
         config = AgentConfig.from_file(args.config)
@@ -429,6 +452,9 @@ def main():
 
     output_file = args.output or f"eval_results_{int(time.time())}.json"
     checkpoint_file = output_file.rsplit(".", 1)[0] + ".checkpoint.json"
+    config.trajectory_dir = args.trajectory_dir or os.path.splitext(output_file)[0] + "_trajectories"
+    print(f"  Trajectories: {config.trajectory_dir}")
+    print(f"  Carry memory: {args.carry_memory}")
 
     world_results = []
     for wr_prev in resumed_results.values():
@@ -441,7 +467,9 @@ def main():
             continue
         task = tasks[w["world_idx"]]
         try:
-            wr = evaluate_world(config, w, task, n_runs=args.n_runs)
+            wr = evaluate_world(
+                config, w, task, n_runs=args.n_runs, carry_memory=args.carry_memory
+            )
         except (KeyboardInterrupt, SystemExit):
             print(f"\n  [Interrupted] Saving checkpoint with {len(world_results)} completed worlds...")
             _save_checkpoint(config, args, world_results, checkpoint_file)

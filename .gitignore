@@ -1,0 +1,5 @@
+trajectories/
+*_trajectories/
+fm_traj.jsonl
+e2e_traj.jsonl
+data_synth_output/
